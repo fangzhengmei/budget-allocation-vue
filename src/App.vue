@@ -1,5 +1,11 @@
 <template>
   <div class="app-container">
+    <Transition name="toast">
+      <div v-if="toastMessage" class="toast" :class="toastType">
+        {{ toastMessage }}
+      </div>
+    </Transition>
+    
     <header class="app-header">
       <h1>预算分配管理</h1>
       <p class="subtitle">在总额约束下自由分配各项预算</p>
@@ -25,6 +31,7 @@
           @update-item="handleUpdateItem"
           @add-item="handleAddItem"
           @remove-item="handleRemoveItem"
+          @show-message="handleShowMessage"
         />
 
         <div class="action-buttons">
@@ -52,12 +59,17 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import BudgetSettings from './components/BudgetSettings.vue'
 import BudgetStatus from './components/BudgetStatus.vue'
 import BudgetItemList from './components/BudgetItemList.vue'
 import HistoryPanel from './components/HistoryPanel.vue'
-import { calculateTotalAllocation, calculateRemaining, createBudgetItem, updateBudgetItem } from './utils/budgetLogic.js'
+import { 
+  createBudgetItem, 
+  tryUpdateBudgetItemWithConstraint,
+  canAddBudgetItem,
+  generateConstraintMessage
+} from './utils/budgetLogic.js'
 import { saveToLocalStorage, loadFromLocalStorage, addToHistory } from './utils/storage.js'
 
 const DEFAULT_TOTAL_BUDGET = 1000
@@ -72,11 +84,29 @@ const totalBudget = ref(DEFAULT_TOTAL_BUDGET)
 const budgetItems = ref(JSON.parse(JSON.stringify(DEFAULT_ITEMS)))
 const history = ref([])
 const lastSavedState = ref(null)
+const toastMessage = ref('')
+const toastType = ref('info')
+let toastTimer = null
 
 const currentState = computed(() => ({
   totalBudget: totalBudget.value,
   budgetItems: JSON.parse(JSON.stringify(budgetItems.value))
 }))
+
+function showToast(message, type = 'info') {
+  if (toastTimer) {
+    clearTimeout(toastTimer)
+  }
+  toastMessage.value = message
+  toastType.value = type
+  toastTimer = setTimeout(() => {
+    toastMessage.value = ''
+  }, 3000)
+}
+
+function handleShowMessage(message, type = 'info') {
+  showToast(message, type)
+}
 
 function handleUpdateTotalBudget(newValue) {
   const oldState = JSON.parse(JSON.stringify(currentState.value))
@@ -86,14 +116,48 @@ function handleUpdateTotalBudget(newValue) {
 
 function handleUpdateItem(id, newValue) {
   const oldState = JSON.parse(JSON.stringify(currentState.value))
-  budgetItems.value = updateBudgetItem(budgetItems.value, id, newValue)
+  
+  const result = tryUpdateBudgetItemWithConstraint(
+    budgetItems.value, 
+    id, 
+    newValue, 
+    totalBudget.value
+  )
+  
+  budgetItems.value = result.updatedItems
+  
+  if (result.wasConstrained) {
+    if (result.wasOverBudget) {
+      showToast(
+        generateConstraintMessage('overBudget', { overAmount: result.overAmount }),
+        'warning'
+      )
+    } else if (newValue < 0) {
+      showToast(
+        generateConstraintMessage('negativeValue'),
+        'warning'
+      )
+    }
+  }
+  
   maybeAddHistory(oldState)
 }
 
 function handleAddItem(name, value = 0) {
+  const addCheck = canAddBudgetItem(budgetItems.value, value, totalBudget.value)
+  
+  if (!addCheck.canAdd) {
+    showToast(
+      generateConstraintMessage('addItemOverBudget', { overAmount: addCheck.overAmount }),
+      'error'
+    )
+    return
+  }
+  
   const oldState = JSON.parse(JSON.stringify(currentState.value))
   budgetItems.value.push(createBudgetItem(name, value))
   maybeAddHistory(oldState)
+  showToast(`已添加预算项：${name}`, 'success')
 }
 
 function handleRemoveItem(id) {
@@ -163,6 +227,52 @@ onMounted(() => {
 </script>
 
 <style scoped>
+.toast {
+  position: fixed;
+  top: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 9999;
+  padding: 16px 24px;
+  border-radius: 8px;
+  font-weight: 500;
+  font-size: 15px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+  max-width: 500px;
+  text-align: center;
+}
+
+.toast.info {
+  background: #2196F3;
+  color: white;
+}
+
+.toast.success {
+  background: #4CAF50;
+  color: white;
+}
+
+.toast.warning {
+  background: #ff9800;
+  color: white;
+}
+
+.toast.error {
+  background: #f44336;
+  color: white;
+}
+
+.toast-enter-active,
+.toast-leave-active {
+  transition: all 0.3s ease;
+}
+
+.toast-enter-from,
+.toast-leave-to {
+  opacity: 0;
+  transform: translateX(-50%) translateY(-20px);
+}
+
 .app-container {
   background: white;
   border-radius: 16px;
