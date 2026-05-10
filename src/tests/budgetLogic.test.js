@@ -310,22 +310,22 @@ describe('预算分配核心逻辑', () => {
       expect(max).toBe(700)
     })
 
-    it('当其他项目已占用全部预算时应该返回 0', () => {
+    it('当其他项目已占用全部预算时应该返回剩余额度', () => {
       const items = [
         { id: 1, name: '餐饮', value: 600 },
         { id: 2, name: '交通', value: 400 }
       ]
       const max = getMaxAllocatableForItem(items, 1, 1000)
-      expect(max).toBe(0)
+      expect(max).toBe(600)
     })
 
-    it('当其他项目超出预算时应该返回 0', () => {
+    it('当其他项目超出预算时应该返回调整后的最大额度', () => {
       const items = [
         { id: 1, name: '餐饮', value: 500 },
         { id: 2, name: '交通', value: 600 }
       ]
       const max = getMaxAllocatableForItem(items, 1, 1000)
-      expect(max).toBe(0)
+      expect(max).toBe(400)
     })
   })
 
